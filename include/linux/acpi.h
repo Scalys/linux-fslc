@@ -837,6 +837,13 @@ static inline int acpi_device_modalias(struct device *dev,
 	return -ENODEV;
 }
 
+static inline struct platform_device *
+acpi_create_platform_device(struct acpi_device *adev,
+			    struct property_entry *properties)
+{
+	return NULL;
+}
+
 static inline bool acpi_dma_supported(struct acpi_device *adev)
 {
 	return false;
@@ -855,6 +862,13 @@ static inline int acpi_dma_get_range(struct device *dev, u64 *dma_addr,
 
 static inline int acpi_dma_configure(struct device *dev,
 				     enum dev_dma_attr attr)
+{
+	return 0;
+}
+
+static inline int acpi_dma_configure_id(struct device *dev,
+					enum dev_dma_attr attr,
+					const u32 *input_id)
 {
 	return 0;
 }

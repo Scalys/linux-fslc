@@ -189,9 +189,9 @@ int cdns3_allocate_trb_pool(struct cdns3_endpoint *priv_ep)
 							GFP_DMA);
 		if (!priv_ep->trb_pool)
 			return -ENOMEM;
+	} else {
+		memset(priv_ep->trb_pool, 0, ring_size);
 	}
-
-	memset(priv_ep->trb_pool, 0, ring_size);
 
 	if (!priv_ep->num)
 		return 0;
@@ -1158,7 +1158,7 @@ static irqreturn_t cdns3_device_thread_irq_handler(struct cdns3 *cdns)
 	unsigned long flags;
 	u32 ep_ien;
 	int bit;
-	u32 reg;
+	unsigned long reg;
 
 	priv_dev = cdns->gadget_dev;
 	spin_lock_irqsave(&priv_dev->lock, flags);
@@ -1190,7 +1190,7 @@ static irqreturn_t cdns3_device_thread_irq_handler(struct cdns3 *cdns)
 	if (!reg)
 		goto irqend;
 
-	for_each_set_bit(bit, (unsigned long *)&reg,
+	for_each_set_bit(bit, &reg,
 			 sizeof(u32) * BITS_PER_BYTE) {
 		priv_dev->shadow_ep_en |= BIT(bit);
 		cdns3_check_ep_interrupt_proceed(priv_dev->eps[bit]);

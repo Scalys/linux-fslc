@@ -355,6 +355,8 @@ struct nxp_fspi {
 	struct mutex lock;
 	struct pm_qos_request pm_qos_req;
 	int selected;
+#define COMPLETION_INITIALIZED	(1 << 1)
+	int flags;
 };
 
 /*
@@ -384,15 +386,23 @@ static irqreturn_t nxp_fspi_irq_handler(int irq, void *dev_id)
 {
 	struct nxp_fspi *f = dev_id;
 	u32 reg;
+	int ret;
 
-	/* clear interrupt */
-	reg = fspi_readl(f, f->iobase + FSPI_INTR);
-	fspi_writel(f, FSPI_INTR_IPCMDDONE, f->iobase + FSPI_INTR);
+	/* must skip till f->c get initialized */
+	if (f->flags & COMPLETION_INITIALIZED) {
+		/* clear interrupt */
+		reg = fspi_readl(f, f->iobase + FSPI_INTR);
+		fspi_writel(f, FSPI_INTR_IPCMDDONE, f->iobase + FSPI_INTR);
 
-	if (reg & FSPI_INTR_IPCMDDONE)
-		complete(&f->c);
+		if (reg & FSPI_INTR_IPCMDDONE)
+			complete(&f->c);
 
-	return IRQ_HANDLED;
+		ret =  IRQ_HANDLED;
+	} else {
+		ret =  IRQ_NONE;
+	}
+
+	return ret;
 }
 
 static int nxp_fspi_check_buswidth(struct nxp_fspi *f, u8 width)
@@ -800,6 +810,7 @@ static int nxp_fspi_do_op(struct nxp_fspi *f, const struct spi_mem_op *op)
 	fspi_writel(f, reg, base + FSPI_IPRXFCR);
 
 	init_completion(&f->c);
+	f->flags |= COMPLETION_INITIALIZED;
 
 	fspi_writel(f, op->addr.val, base + FSPI_IPCR0);
 	/*
@@ -991,6 +1002,7 @@ static int nxp_fspi_probe(struct platform_device *pdev)
 	struct resource *res;
 	struct nxp_fspi *f;
 	int ret;
+	u32 reg;
 
 	ctlr = spi_alloc_master(&pdev->dev, sizeof(*f));
 	if (!ctlr)
@@ -1009,6 +1021,9 @@ static int nxp_fspi_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, f);
 
+	/* mark f->c as uninitilized */
+	f->flags &= ~COMPLETION_INITIALIZED;
+
 	/* find the resources - configuration register address space */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "fspi_base");
 	f->iobase = devm_ioremap_resource(dev, res);
@@ -1016,6 +1031,12 @@ static int nxp_fspi_probe(struct platform_device *pdev)
 		ret = PTR_ERR(f->iobase);
 		goto err_put_ctrl;
 	}
+
+	/* Clear potential interrupts */
+	reg = fspi_readl(f, f->iobase + FSPI_INTR);
+	if (reg)
+		fspi_writel(f, reg, f->iobase + FSPI_INTR);
+
 
 	/* find the resources - controller memory mapped space */
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "fspi_mmap");

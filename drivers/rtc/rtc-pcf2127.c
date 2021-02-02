@@ -230,10 +230,8 @@ static int pcf2127_nvmem_read(void *priv, unsigned int offset,
 	if (ret)
 		return ret;
 
-	ret = regmap_bulk_read(pcf2127->regmap, PCF2127_REG_RAM_RD_CMD,
-			       val, bytes);
-
-	return ret ?: bytes;
+	return regmap_bulk_read(pcf2127->regmap, PCF2127_REG_RAM_RD_CMD,
+				val, bytes);
 }
 
 static int pcf2127_nvmem_write(void *priv, unsigned int offset,
@@ -248,10 +246,8 @@ static int pcf2127_nvmem_write(void *priv, unsigned int offset,
 	if (ret)
 		return ret;
 
-	ret = regmap_bulk_write(pcf2127->regmap, PCF2127_REG_RAM_WRT_CMD,
-				val, bytes);
-
-	return ret ?: bytes;
+	return regmap_bulk_write(pcf2127->regmap, PCF2127_REG_RAM_WRT_CMD,
+				 val, bytes);
 }
 
 /* watchdog driver */
@@ -321,6 +317,46 @@ static const struct watchdog_ops pcf2127_watchdog_ops = {
 	.ping = pcf2127_wdt_ping,
 	.set_timeout = pcf2127_wdt_set_timeout,
 };
+
+static int pcf2127_watchdog_init(struct device *dev, struct pcf2127 *pcf2127)
+{
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_WATCHDOG) ||
+	    !device_property_read_bool(dev, "has-watchdog"))
+		return 0;
+
+	pcf2127->wdd.parent = dev;
+	pcf2127->wdd.info = &pcf2127_wdt_info;
+	pcf2127->wdd.ops = &pcf2127_watchdog_ops;
+	pcf2127->wdd.min_timeout = PCF2127_WD_VAL_MIN;
+	pcf2127->wdd.max_timeout = PCF2127_WD_VAL_MAX;
+	pcf2127->wdd.timeout = PCF2127_WD_VAL_DEFAULT;
+	pcf2127->wdd.min_hw_heartbeat_ms = 500;
+
+	watchdog_set_drvdata(&pcf2127->wdd, pcf2127);
+
+	/*
+	 * Watchdog timer enabled and reset pin /RST activated when timed out.
+	 * Select 1Hz clock source for watchdog timer.
+	 * Timer is not started until WD_VAL is loaded with a valid value.
+	 * Note: Countdown timer disabled and not available.
+	 */
+	ret = regmap_update_bits(pcf2127->regmap, PCF2127_REG_WD_CTL,
+				 PCF2127_BIT_WD_CTL_CD1 |
+				 PCF2127_BIT_WD_CTL_CD0 |
+				 PCF2127_BIT_WD_CTL_TF1 |
+				 PCF2127_BIT_WD_CTL_TF0,
+				 PCF2127_BIT_WD_CTL_CD1 |
+				 PCF2127_BIT_WD_CTL_CD0 |
+				 PCF2127_BIT_WD_CTL_TF1);
+	if (ret) {
+		dev_err(dev, "%s: watchdog config (wd_ctl) failed\n", __func__);
+		return ret;
+	}
+
+	return devm_watchdog_register_device(dev, &pcf2127->wdd);
+}
 
 /* sysfs interface */
 
@@ -435,15 +471,6 @@ static int pcf2127_probe(struct device *dev, struct regmap *regmap,
 
 	pcf2127->rtc->ops = &pcf2127_rtc_ops;
 
-	pcf2127->wdd.parent = dev;
-	pcf2127->wdd.info = &pcf2127_wdt_info;
-	pcf2127->wdd.ops = &pcf2127_watchdog_ops;
-	pcf2127->wdd.min_timeout = PCF2127_WD_VAL_MIN;
-	pcf2127->wdd.max_timeout = PCF2127_WD_VAL_MAX;
-	pcf2127->wdd.timeout = PCF2127_WD_VAL_DEFAULT;
-	pcf2127->wdd.min_hw_heartbeat_ms = 500;
-
-	watchdog_set_drvdata(&pcf2127->wdd, pcf2127);
 
 	if (has_nvmem) {
 		struct nvmem_config nvmem_cfg = {
@@ -456,30 +483,7 @@ static int pcf2127_probe(struct device *dev, struct regmap *regmap,
 		ret = rtc_nvmem_register(pcf2127->rtc, &nvmem_cfg);
 	}
 
-	/*
-	 * Watchdog timer enabled and reset pin /RST activated when timed out.
-	 * Select 1Hz clock source for watchdog timer.
-	 * Timer is not started until WD_VAL is loaded with a valid value.
-	 * Note: Countdown timer disabled and not available.
-	 */
-	ret = regmap_update_bits(pcf2127->regmap, PCF2127_REG_WD_CTL,
-				 PCF2127_BIT_WD_CTL_CD1 |
-				 PCF2127_BIT_WD_CTL_CD0 |
-				 PCF2127_BIT_WD_CTL_TF1 |
-				 PCF2127_BIT_WD_CTL_TF0,
-				 PCF2127_BIT_WD_CTL_CD1 |
-				 PCF2127_BIT_WD_CTL_CD0 |
-				 PCF2127_BIT_WD_CTL_TF1);
-	if (ret) {
-		dev_err(dev, "%s: watchdog config (wd_ctl) failed\n", __func__);
-		return ret;
-	}
-
-#ifdef CONFIG_WATCHDOG
-	ret = devm_watchdog_register_device(dev, &pcf2127->wdd);
-	if (ret)
-		return ret;
-#endif /* CONFIG_WATCHDOG */
+	pcf2127_watchdog_init(dev, pcf2127);
 
 	/*
 	 * Disable battery low/switch-over timestamp and interrupts.
